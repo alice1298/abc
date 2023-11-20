@@ -1,0 +1,184 @@
+-- ROLLCALL
+DELIMITER //
+
+CREATE PROCEDURE merge_rollcall_data()
+BEGIN
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE n_id INT;
+
+    DECLARE n_cursor CURSOR FOR SELECT student_id FROM N_RollCall;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+    OPEN n_cursor;
+
+    read_loop: LOOP
+        FETCH n_cursor INTO n_id;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM O_RollCall WHERE student_id = n_id) THEN
+            INSERT INTO O_RollCall SELECT * FROM N_RollCall WHERE student_id = n_id LIMIT 1;
+        END IF;
+    END LOOP;
+
+    CLOSE n_cursor;
+END //
+
+DELIMITER ;
+
+-- CLASS  
+
+DELIMITER //
+
+CREATE PROCEDURE proc_Grade()
+BEGIN
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE stud_roll INT;
+    DECLARE stud_name VARCHAR(50);
+    DECLARE stud_marks INT;
+
+    DECLARE stud_cursor CURSOR FOR SELECT Rollno, Name, Total_Marks FROM Stud_Marks;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+    OPEN stud_cursor;
+
+    read_loop: LOOP
+        FETCH stud_cursor INTO stud_roll, stud_name, stud_marks;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+
+        SET @v_class = NULL;
+        IF stud_marks <= 1500 AND stud_marks >= 990 THEN
+            SET @v_class := 'Distinction';
+        ELSEIF stud_marks <= 989 AND stud_marks >= 900 THEN
+            SET @v_class := 'First Class';
+        ELSEIF stud_marks <= 899 AND stud_marks >= 825 THEN
+            SET @v_class := 'Higher Second Class';
+        ELSE
+            SET @v_class := 'Not Classified';
+        END IF;
+
+        INSERT INTO Result VALUES (stud_roll, stud_name, @v_class);
+    END LOOP;
+
+    CLOSE stud_cursor;
+END //
+
+DELIMITER ;
+
+CALL proc_Grade;
+
+SELECT * FROM Result;
+
+-- CUSTOMER
+DELIMITER //
+
+CREATE PROCEDURE GetCustomerNames()
+BEGIN
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE customer_name_var VARCHAR(50);
+
+    DECLARE customer_cursor CURSOR FOR SELECT customer_name FROM Customer;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+    CREATE TEMPORARY TABLE CustomerList (
+        customer_name_result VARCHAR(50)
+    );
+
+    OPEN customer_cursor;
+
+    read_loop: LOOP
+        FETCH customer_cursor INTO customer_name_var;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+
+        INSERT INTO CustomerList VALUES (customer_name_var);
+    END LOOP;
+
+    CLOSE customer_cursor;
+
+    SELECT * FROM CustomerList;
+
+    DROP TEMPORARY TABLE IF EXISTS CustomerList;
+END //
+
+DELIMITER ;
+
+CALL GetCustomerNames();
+
+########################################################
+
+TRIGGER
+-- ORDER 
+DELIMITER //
+
+CREATE TRIGGER UpdateProductCount
+AFTER INSERT ON CustomerOrder
+FOR EACH ROW
+BEGIN
+    DECLARE ordered_qty INT;
+
+    SELECT Qty INTO ordered_qty FROM CustomerOrder WHERE Oid = NEW.Oid;
+
+    UPDATE Product
+    SET Qty = Qty - ordered_qty
+    WHERE Pid = NEW.Pid;
+END //
+
+DELIMITER ;
+
+
+-- BOOKS
+CREATE TABLE Library (
+    BookId INT PRIMARY KEY,
+    Title VARCHAR(100),
+    Author VARCHAR(50),
+    Quantity INT
+);
+
+CREATE TABLE Library_Audit (
+    AuditId INT AUTO_INCREMENT PRIMARY KEY,
+    Action VARCHAR(10), -- 'UPDATE' or 'DELETE'
+    BookId INT,
+    OldTitle VARCHAR(100),
+    OldAuthor VARCHAR(50),
+    OldQuantity INT,
+    Timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO Library VALUES (1, 'The Great Gatsby', 'F. Scott Fitzgerald', 10);
+INSERT INTO Library VALUES (2, 'To Kill a Mockingbird', 'Harper Lee', 15);
+
+DELIMITER //
+
+CREATE TRIGGER Library_Update_Trigger
+BEFORE UPDATE ON Library
+FOR EACH ROW
+BEGIN
+    INSERT INTO Library_Audit (Action, BookId, OldTitle, OldAuthor, OldQuantity)
+    VALUES ('UPDATE', OLD.BookId, OLD.Title, OLD.Author, OLD.Quantity);
+END //
+
+DELIMITER ;
+
+DELIMITER //
+
+CREATE TRIGGER Library_Delete_Trigger
+BEFORE DELETE ON Library
+FOR EACH ROW
+BEGIN
+    INSERT INTO Library_Audit (Action, BookId, OldTitle, OldAuthor, OldQuantity)
+    VALUES ('DELETE', OLD.BookId, OLD.Title, OLD.Author, OLD.Quantity);
+END //
+
+DELIMITER ;
+
+UPDATE Library SET Quantity = 8 WHERE BookId = 1; -- Update
+DELETE FROM Library WHERE BookId = 2; -- Delete
+
+SELECT * FROM Library;
+
+SELECT * FROM Library_Audit;
